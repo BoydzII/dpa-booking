@@ -9,7 +9,7 @@
   const today = () => D.todayStr();
 
   const S = { mode: lsGet('dpa_mode') || (isLocal ? 'demo' : 'real'), user: null, cfg: D.withDefaults(), slots: [], map: {}, staff: null, tab: 'book',
-    officer: 'all', date: '', month: today().slice(0, 8) + '01', week: D.mondayOf(today()), draft: null, loading: false };
+    officer: 'all', date: '', month: today().slice(0, 8) + '01', week: D.mondayOf(today()), draft: null, loading: false, restoring: false };
   let store = null, unwatch = null;
 
   /* ================= ที่เก็บข้อมูล 2 แบบ (หน้าตา API เหมือนกัน) ================= */
@@ -133,7 +133,7 @@
       (demo ? '<div class="card" style="text-align:left"><span class="chip">โหมดทดลอง</span><p class="small muted">ข้อมูลจำลองเก็บในเครื่องนี้เท่านั้น ไม่เชื่อม KruSpace เลือกบทบาทเพื่อลองใช้</p><div class="row">' +
         Demo.personas().map((p, i) => '<button class="btn" data-act="demoLogin" data-e="' + esc(p.email) + '">' + (i === 0 ? 'แอดมิน' : i < 5 ? 'เจ้าหน้าที่ ' + i : 'ครู ' + (i - 4)) + '</button>').join('') + '</div>' +
         '<p class="small" style="margin:12px 0 0"><button class="btn sm" data-act="demoReset">ล้างข้อมูลตัวอย่าง</button> <button class="btn sm" data-act="modeReal">ใช้บัญชี KruSpace จริง</button></p></div>'
-        : '<button class="btn pri" data-act="login" style="width:100%;margin-top:14px" ' + (S.loading ? 'disabled' : '') + '>' + (S.loading ? 'กำลังเข้าสู่ระบบ…' : 'เข้าสู่ระบบด้วย Google') + '</button>' +
+        : S.restoring ? '<p class="muted" style="margin-top:18px">กำลังเข้าสู่ระบบด้วยบัญชี KruSpace…</p>' : '<button class="btn pri" data-act="login" style="width:100%;margin-top:14px" ' + (S.loading ? 'disabled' : '') + '>' + (S.loading ? 'กำลังเข้าสู่ระบบ…' : 'เข้าสู่ระบบด้วย Google') + '</button>' +
         '<p class="small muted">ใช้อีเมลที่ลงทะเบียนไว้ใน KruSpace เท่านั้น</p>' + (isLocal ? '<p><button class="btn sm" data-act="modeDemo">ลองโหมดทดลอง</button></p>' : '')) + '</div>';
   }
 
@@ -321,7 +321,13 @@
   }
   async function logout() { if (unwatch) unwatch(); unwatch = null; await store.logout(); S.user = null; S.slots = []; S.map = {}; S.cfg = D.withDefaults(); render(); }
   function setMode(m) { S.mode = m; lsSet('dpa_mode', m); store = m === 'demo' ? Demo : Real; S.user = null; render(); if (m === 'real') tryRestore(); }
-  async function tryRestore() { try { const u = await store.restore(); if (u && !S.user) startSession(u); } catch (e) { /* ไม่มี session เดิม */ } }
+  /* KruSpace กับแอปนี้อยู่โดเมนเดียวกันและใช้ Firebase ชุดเดียวกัน ถ้าล็อกอิน KruSpace ไว้แล้วจะเข้าได้ทันที
+     ระหว่างรอตรวจ session ให้ขึ้นข้อความแทนปุ่มล็อกอิน จะได้ไม่เข้าใจผิดว่าต้องล็อกอินใหม่ */
+  async function tryRestore() {
+    S.restoring = true; render();
+    try { const u = await store.restore(); if (u && !S.user) startSession(u); } catch (e) { /* ไม่มี session เดิม */ }
+    S.restoring = false; if (!S.user) render();
+  }
 
   /* ================= เหตุการณ์ ================= */
   document.addEventListener('click', e => {
