@@ -1,0 +1,67 @@
+/* ===== กติกาเพิ่มสำหรับแอปจองคิว DPA (dpa-booking) =====
+   วิธีใช้: เปิด Firebase Console → Firestore Database → กฎ (Rules)
+   แล้ววาง 2 บล็อก match ด้านล่างนี้ "ก่อน" บรรทัดสุดท้าย   match /{document=**} { allow read, write: if false; }
+   (อยู่ใน service cloud.firestore → match /databases/{database}/documents ร่วมกับกติกาเดิม ห้ามลบของเดิม)
+   ใช้ตัวช่วย signedIn() myId() isStaff() isAdmin() ที่มีอยู่แล้วในไฟล์ app/firestore.rules
+   แล้วกด "เผยแพร่" — ยังไม่ได้วางให้ ต้องให้เจ้าของโปรเจกต์ทำเอง */
+
+    /* ---------- ตั้งค่าแอปจองคิว: ทุกคนอ่าน แอดมินแก้ ---------- */
+    match /dpaConfig/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    /* ---------- คิว: 1 เอกสาร = 1 ช่องเวลาของเจ้าหน้าที่ 1 คน ----------
+       รหัสเอกสาร = อีเมลเจ้าหน้าที่_YYYY-MM-DD_HHmm  (จึงจองซ้ำช่องเดียวกันไม่ได้)
+       status: open → requested → confirmed | declined | cancelled */
+    match /dpaSlots/{slotId} {
+      function isOfficer() {
+        return isStaff()
+          && myId() in get(/databases/$(database)/documents/dpaConfig/main).data.officerEmails;
+      }
+      function changed() {
+        return request.resource.data.diff(resource.data).affectedKeys();
+      }
+
+      allow read: if isStaff();
+
+      // เจ้าหน้าที่ประกาศช่วงว่างของตัวเองเท่านั้น
+      allow create: if isAdmin()
+        || (isOfficer()
+            && request.resource.data.officer == myId()
+            && request.resource.data.status == 'open'
+            && request.resource.data.keys().hasOnly(['officer', 'officerName', 'date', 'start', 'status', 'createdAt']));
+
+      allow update: if isAdmin()
+        // ครูขอจองช่องที่ว่าง (เปลี่ยนได้เฉพาะช่องข้อมูลของผู้จอง และจองแทนคนอื่นไม่ได้)
+        || (isStaff()
+            && resource.data.status == 'open'
+            && request.resource.data.status == 'requested'
+            && request.resource.data.teacherEmail == myId()
+            && resource.data.officer != myId()
+            && changed().hasOnly(['status', 'teacherEmail', 'teacherName', 'teacherPhone', 'topic', 'note', 'requestedAt']))
+        // ครูยกเลิกคิวของตัวเอง
+        || (isStaff()
+            && resource.data.teacherEmail == myId()
+            && resource.data.status in ['requested', 'confirmed']
+            && request.resource.data.status == 'cancelled'
+            && changed().hasOnly(['status', 'cancelledAt']))
+        // เจ้าหน้าที่เจ้าของช่องรับ/ปฏิเสธ/ยกเลิก
+        || (isOfficer()
+            && resource.data.officer == myId()
+            && resource.data.status in ['requested', 'confirmed']
+            && request.resource.data.status in ['confirmed', 'declined', 'cancelled']
+            && changed().hasOnly(['status', 'decidedAt', 'officerNote']))
+        // เจ้าหน้าที่เปิดช่องที่ปฏิเสธ/ยกเลิกให้ว่างอีกครั้ง (ล้างข้อมูลผู้จอง)
+        || (isOfficer()
+            && resource.data.officer == myId()
+            && resource.data.status in ['declined', 'cancelled']
+            && request.resource.data.status == 'open'
+            && changed().hasOnly(['status', 'teacherEmail', 'teacherName', 'teacherPhone', 'topic', 'note', 'requestedAt', 'decidedAt', 'officerNote', 'cancelledAt']));
+
+      // ลบได้เฉพาะช่องที่ยังไม่มีคิวอยู่ (ว่าง/ปฏิเสธ/ยกเลิก)
+      allow delete: if isAdmin()
+        || (isOfficer()
+            && resource.data.officer == myId()
+            && resource.data.status in ['open', 'declined', 'cancelled']);
+    }
