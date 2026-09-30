@@ -108,6 +108,8 @@
   const tel = p => p ? '<a class="btn sm" href="tel:' + esc(String(p).replace(/[^0-9+]/g, '')) + '">โทร ' + esc(p) + '</a>' : '<span class="muted small">ยังไม่มีเบอร์</span>';
   const badge = st => '<span class="badge b-' + st + '">' + D.STATUS[st] + '</span>';
 
+  /* จอกว้างตั้งแต่ไอแพดขึ้นไปแบ่งซ้าย–ขวาให้พอดีหนึ่งหน้าจอ มือถือเรียงบนลงล่างแล้วเลื่อนตามปกติ (ดู .split ใน style.css) */
+  const split = (l, r) => '<div class="split"><div class="col">' + l + '</div><div class="col">' + r + '</div></div>';
   function toast(m, bad) { const t = $('#toast'); t.textContent = m; t.className = 'on' + (bad ? ' bad' : ''); clearTimeout(toast.h); toast.h = setTimeout(() => { t.className = ''; }, 3200); }
   function modal(title, html, btns) {
     const root = $('#modalRoot');
@@ -155,13 +157,14 @@
       cal += '<button data-act="day" data-d="' + ds + '" class="' + (n && !bad ? 'has ' : '') + (S.date === ds ? 'sel ' : '') + (ds === t ? 'today' : '') + '" ' + (bad ? 'disabled title="' + esc(bad) + '"' : '') + '>' + d + (n && !bad ? '<i>' + n + '</i>' : '') + '</button>';
     }
     cal += '</div><p class="small muted" style="margin-bottom:0">เลขมุมล่างคือจำนวนคิวว่าง · จองได้ล่วงหน้าถึง ' + D.thaiDate(D.addMonths(t, S.cfg.maxMonths)) + '</p>';
-    h += '<div class="card">' + cal + '</div>';
+    h += '<div class="card grow">' + cal + '</div>';
 
     /* ตารางเวลาของวันที่เลือก */
+    let r = '';
     if (S.date) {
-      h += '<div class="card"><h2>' + D.thaiDate(S.date) + '</h2><div class="legend"><span style="--c:var(--ok-soft)">ว่าง กดจอง</span><span style="--c:var(--info-soft)">คิวของคุณ</span><span style="--c:var(--off)">ไม่ว่าง</span></div><table class="g"><tr><th></th>' + shown.map(o => '<th>' + esc(short(o.name)) + '</th>').join('') + '</tr>';
+      r += '<div class="card grow"><h2>' + D.thaiDate(S.date) + '</h2><div class="legend"><span style="--c:var(--ok-soft)">ว่าง กดจอง</span><span style="--c:var(--info-soft)">คิวของคุณ</span><span style="--c:var(--off)">ไม่ว่าง</span></div><div class="gwrap"><table class="g" style="--n:' + shown.length + '"><tr><th></th>' + shown.map(o => '<th>' + esc(short(o.name)) + '</th>').join('') + '</tr>';
       D.slotStarts(S.cfg).forEach(st => {
-        h += '<tr><td class="t">' + st + '</td>' + shown.map(o => {
+        r += '<tr><td class="t">' + st + '</td>' + shown.map(o => {
           const s = S.map[D.slotId(o.email, S.date, st)];
           if (!s) return '<td><button class="c" disabled>–</button></td>';
           if (s.status === 'open') return '<td><button class="c free" data-act="book" data-id="' + esc(s.id) + '">ว่าง</button></td>';
@@ -169,9 +172,9 @@
           return '<td><button class="c" disabled>ไม่ว่าง' + ((isOfficer() || admin) && s.teacherName ? '<br>' + esc(short(s.teacherName)) : '') + '</button></td>';
         }).join('') + '</tr>';
       });
-      h += '</table></div>';
-    } else h += '<div class="card empty">เลือกวันที่ในปฏิทินเพื่อดูตารางเวลาของเจ้าหน้าที่</div>';
-    return h;
+      r += '</table></div></div>';
+    } else r += '<div class="card grow empty center">เลือกวันที่ในปฏิทินเพื่อดูตารางเวลาของเจ้าหน้าที่</div>';
+    return split(h, r);
   }
 
   function bookModal(id) {
@@ -195,29 +198,29 @@
   function viewMine() {
     const list = S.slots.filter(s => s.teacherEmail === S.user.email && s.status !== 'open').sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
     if (!list.length) return '<div class="card empty">ยังไม่มีคิวที่จองไว้<br><button class="btn pri" style="margin-top:10px" data-act="tab" data-t="book">ไปจองคิว</button></div>';
-    return '<div class="card">' + list.map(s => {
+    return '<div class="split one"><div class="col"><div class="card grow"><div class="list">' + list.map(s => {
       const o = S.cfg.officers.find(x => x.email === s.officer) || {};
       return '<div class="item"><div><b>' + esc(when(s)) + '</b><br>' + esc(s.topic || '') + ' · เจ้าหน้าที่ ' + esc(offName(s.officer)) + (s.note ? '<br><span class="small muted">หมายเหตุ: ' + esc(s.note) + '</span>' : '') +
         (s.officerNote ? '<br><span class="small">ข้อความจากเจ้าหน้าที่: ' + esc(s.officerNote) + '</span>' : '') + '</div><div class="row">' + badge(s.status) + tel(o.phone) +
         (s.status === 'requested' || s.status === 'confirmed' ? '<button class="btn sm bad" data-act="cancel" data-id="' + esc(s.id) + '">ยกเลิกคิว</button>' : '') + '</div></div>';
-    }).join('') + '</div>';
+    }).join('') + '</div></div></div></div>';
   }
 
   /* ================= หน้า: งานของฉัน (เจ้าหน้าที่) ================= */
   function viewWork() {
     const me = S.user.email, t = today(), pend = pending();
-    let h = '<div class="card"><h2>คำขอที่รอรับ' + (pend.length ? ' (' + pend.length + ')' : '') + '</h2>' +
+    const h = '<div class="card grow"><h2>คำขอที่รอรับ' + (pend.length ? ' (' + pend.length + ')' : '') + '</h2><div class="list">' +
       (pend.length ? pend.map(s => '<div class="item"><div><b>' + esc(when(s)) + '</b><br>' + esc(s.teacherName) + ' · ' + esc(s.topic || '') + (s.note ? '<br><span class="small muted">หมายเหตุ: ' + esc(s.note) + '</span>' : '') + '</div><div class="row">' + tel(s.teacherPhone) +
-        '<button class="btn sm ok" data-act="accept" data-id="' + esc(s.id) + '">รับ</button><button class="btn sm bad" data-act="reject" data-id="' + esc(s.id) + '">ปฏิเสธ</button></div></div>').join('') : '<p class="muted">ไม่มีคำขอค้างอยู่</p>') + '</div>';
+        '<button class="btn sm ok" data-act="accept" data-id="' + esc(s.id) + '">รับ</button><button class="btn sm bad" data-act="reject" data-id="' + esc(s.id) + '">ปฏิเสธ</button></div></div>').join('') : '<p class="muted">ไม่มีคำขอค้างอยู่</p>') + '</div></div>';
 
     const wk = S.week, days = [0, 1, 2, 3, 4].map(i => D.addDays(wk, i)), starts = D.slotStarts(S.cfg), maxD = D.addMonths(t, S.cfg.maxMonths);
     const canPrev = wk > D.mondayOf(t), canNext = D.addDays(wk, 7) <= maxD;
-    h += '<div class="card"><div class="cal-h"><button class="btn sm" data-act="wk" data-d="-7" ' + (canPrev ? '' : 'disabled') + '>‹ สัปดาห์ก่อน</button><h2>' + D.thaiDate(days[0]).slice(3) + ' – ' + D.thaiDate(days[4]).slice(3) + '</h2><button class="btn sm" data-act="wk" data-d="7" ' + (canNext ? '' : 'disabled') + '>สัปดาห์ถัดไป ›</button></div>' +
+    let r = '<div class="card grow"><div class="cal-h"><button class="btn sm" data-act="wk" data-d="-7" ' + (canPrev ? '' : 'disabled') + '>‹ สัปดาห์ก่อน</button><h2>' + D.thaiDate(days[0]).slice(3) + ' – ' + D.thaiDate(days[4]).slice(3) + '</h2><button class="btn sm" data-act="wk" data-d="7" ' + (canNext ? '' : 'disabled') + '>สัปดาห์ถัดไป ›</button></div>' +
       '<p class="small muted">แตะช่องเพื่อเปิด/ปิดเวลาที่ว่าง · แตะช่องที่มีครูจองเพื่อดูรายละเอียด</p>' +
-      '<div class="legend"><span style="--c:var(--ok-soft)">ว่าง</span><span style="--c:var(--warn-soft)">รอรับ</span><span style="--c:var(--info-soft)">รับแล้ว</span><span style="--c:var(--bad-soft)">ปฏิเสธ/ยกเลิก</span></div><table class="g"><tr><th></th>' +
+      '<div class="legend"><span style="--c:var(--ok-soft)">ว่าง</span><span style="--c:var(--warn-soft)">รอรับ</span><span style="--c:var(--info-soft)">รับแล้ว</span><span style="--c:var(--bad-soft)">ปฏิเสธ/ยกเลิก</span></div><div class="gwrap"><table class="g" style="--n:5"><tr><th></th>' +
       days.map(d => '<th>' + D.DOW[D.dow(d)] + ' ' + D.parse(d).getDate() + (D.officerDateProblem(d, t, S.cfg) ? '' : '<br><button class="btn sm" style="padding:0 6px;min-height:24px" data-act="wday" data-d="' + d + '">ทั้งวัน</button>') + '</th>').join('') + '</tr>';
     starts.forEach(st => {
-      h += '<tr><td class="t">' + st + '</td>' + days.map(d => {
+      r += '<tr><td class="t">' + st + '</td>' + days.map(d => {
         if (D.officerDateProblem(d, t, S.cfg)) return '<td><button class="c" disabled>–</button></td>';
         const s = S.map[D.slotId(me, d, st)], a = 'data-act="wcell" data-d="' + d + '" data-s="' + st + '"';
         if (!s) return '<td><button class="c" ' + a + '>+</button></td>';
@@ -225,8 +228,8 @@
         return '<td><button class="c ' + cls + '" ' + a + '>' + (s.status === 'open' ? 'ว่าง' : D.STATUS[s.status] + '<br>' + esc(short(s.teacherName || ''))) + '</button></td>';
       }).join('') + '</tr>';
     });
-    h += '</table><div class="row" style="margin-top:12px"><span>คัดลอกช่วงว่างของสัปดาห์นี้ไปอีก</span><input type="number" id="rep" value="4" min="1" max="26" style="width:80px"><span>สัปดาห์</span><button class="btn" data-act="repeat">คัดลอก</button></div></div>';
-    return h;
+    r += '</table></div><div class="row" style="margin-top:12px"><span>คัดลอกช่วงว่างของสัปดาห์นี้ไปอีก</span><input type="number" id="rep" value="4" min="1" max="26" style="width:80px"><span>สัปดาห์</span><button class="btn" data-act="repeat">คัดลอก</button></div></div>';
+    return split(h, r);
   }
 
   function cellAct(date, st) {
@@ -250,17 +253,19 @@
   }
   function viewAdmin() {
     const d = ensureDraft(), all = S.slots.filter(s => s.status !== 'open').sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
-    return '<div class="card"><h2>เจ้าหน้าที่ (สูงสุด 4 คน)</h2><p class="small muted">เลือกจากรายชื่อครูใน KruSpace เบอร์โทรดึงจากทะเบียนครู แก้ทับได้ที่นี่</p>' +
-      (d.officers.length ? d.officers.map((o, i) => '<div class="item"><div><b>' + esc(o.name) + '</b><br><span class="small muted">' + esc(o.email) + '</span></div><div class="row"><input type="text" inputmode="tel" data-bind="phone" data-i="' + i + '" value="' + esc(o.phone) + '" placeholder="เบอร์โทร" style="width:150px"><button class="btn sm bad" data-act="rmOff" data-i="' + i + '">เอาออก</button></div></div>').join('') : '<p class="muted">ยังไม่ได้เลือก</p>') +
-      '<button class="btn" data-act="pickOff" ' + (S.staff === 'loading' ? 'disabled' : '') + '>เลือกเจ้าหน้าที่จากรายชื่อครู</button></div>' +
-      '<div class="card"><h2>กติกาการจอง</h2><div class="row"><div><label class="f" for="mx">คิวที่ครูมีพร้อมกันได้</label><input type="number" id="mx" data-bind="maxActive" min="1" max="10" value="' + d.maxActive + '"></div><div><label class="f" for="ml">จองล่วงหน้าอย่างน้อย (วัน)</label><input type="number" id="ml" data-bind="minLeadDays" min="0" max="30" value="' + d.minLeadDays + '"></div></div>' +
+    const offCard = '<div class="card"><h2>เจ้าหน้าที่ (สูงสุด 4 คน)</h2><p class="small muted">เลือกจากรายชื่อครูใน KruSpace เบอร์โทรดึงจากทะเบียนครู แก้ทับได้ที่นี่</p>' +
+      (d.officers.length ? d.officers.map((o, i) => '<div class="oi"><div class="oi-r"><b>' + esc(o.name) + '</b><button class="btn sm bad" data-act="rmOff" data-i="' + i + '">เอาออก</button></div><div class="oi-r"><span class="small muted em">' + esc(o.email) + '</span><input type="text" inputmode="tel" data-bind="phone" data-i="' + i + '" value="' + esc(o.phone) + '" placeholder="เบอร์โทร"></div></div>').join('') : '<p class="muted">ยังไม่ได้เลือก</p>') +
+      '<button class="btn" data-act="pickOff" ' + (S.staff === 'loading' ? 'disabled' : '') + '>เลือกเจ้าหน้าที่จากรายชื่อครู</button></div>';
+    const ruleCard = '<div class="card"><h2>กติกาการจอง</h2><div class="row"><div><label class="f" for="mx">คิวที่ครูมีพร้อมกันได้</label><input type="number" id="mx" data-bind="maxActive" min="1" max="10" value="' + d.maxActive + '"></div><div><label class="f" for="ml">จองล่วงหน้าอย่างน้อย (วัน)</label><input type="number" id="ml" data-bind="minLeadDays" min="0" max="30" value="' + d.minLeadDays + '"></div></div>' +
       '<label class="f" for="tp">เรื่องที่จอง (บรรทัดละเรื่อง)</label><textarea id="tp" rows="3" data-bind="topics">' + esc(d.topics.join('\n')) + '</textarea>' +
       '<label class="f" for="hd">วันหยุดพิเศษ</label><div class="row"><input type="date" id="hd" style="width:auto"><button class="btn sm" data-act="addHol">เพิ่มวันหยุด</button></div><div class="row" style="margin-top:8px">' +
       d.holidays.slice().sort().map(h => '<button class="btn sm" data-act="rmHol" data-d="' + h + '" title="แตะเพื่อลบ">' + D.thaiDate(h) + ' ✕</button>').join('') + '</div>' +
       '<p class="small muted">เวลาราชการ ' + S.cfg.dayStart + '–' + S.cfg.dayEnd + ' น. คิวละ ' + S.cfg.slotMinutes + ' นาที จันทร์–ศุกร์ ล่วงหน้าได้ไม่เกิน ' + S.cfg.maxMonths + ' เดือน</p>' +
-      '<button class="btn pri" data-act="saveCfg">บันทึกการตั้งค่า</button></div>' +
-      '<div class="card"><div class="row" style="justify-content:space-between"><h2>คิวทั้งหมดที่จองแล้ว (' + all.length + ')</h2><button class="btn sm" data-act="csv" ' + (all.length ? '' : 'disabled') + '>ดาวน์โหลด CSV</button></div>' +
-      (all.length ? all.map(s => '<div class="item"><div><b>' + esc(when(s)) + '</b><br>' + esc(s.teacherName) + ' → ' + esc(offName(s.officer)) + '<br><span class="small muted">' + esc(s.topic || '') + '</span></div>' + badge(s.status) + '</div>').join('') : '<p class="muted">ยังไม่มีการจอง</p>') + '</div>';
+      '<button class="btn pri" data-act="saveCfg">บันทึกการตั้งค่า</button></div>';
+    const listCard = '<div class="card grow"><div class="row" style="justify-content:space-between"><h2>คิวทั้งหมดที่จองแล้ว (' + all.length + ')</h2><button class="btn sm" data-act="csv" ' + (all.length ? '' : 'disabled') + '>ดาวน์โหลด CSV</button></div><div class="list">' +
+      (all.length ? all.map(s => '<div class="item"><div><b>' + esc(when(s)) + '</b><br>' + esc(s.teacherName) + ' → ' + esc(offName(s.officer)) + '<br><span class="small muted">' + esc(s.topic || '') + '</span></div>' + badge(s.status) + '</div>').join('') : '<p class="muted">ยังไม่มีการจอง</p>') + '</div></div>';
+    /* จอกว้างมากแบ่ง 3 คอลัมน์ ไอแพดเป็น 2 คอลัมน์ (กติกาอยู่บน รายการคิวอยู่ล่าง) ดู .split.tri */
+    return '<div class="split tri"><div class="col c1">' + offCard + '</div><div class="col c2">' + ruleCard + '</div><div class="col c3">' + listCard + '</div></div>';
   }
 
   async function pickOfficers() {
@@ -301,7 +306,7 @@
     if (isAdmin()) tabs.push(['admin', 'ตั้งค่า']);
     if (!tabs.some(t => t[0] === S.tab)) S.tab = 'book';
     const body = S.tab === 'book' ? viewBook() : S.tab === 'mine' ? viewMine() : S.tab === 'work' ? viewWork() : viewAdmin();
-    app.innerHTML = '<div class="wrap"><div class="top"><div class="grow"><h1>จองคิวลงข้อมูล DPA</h1><small>' + esc(S.user.name) + (isOfficer() ? ' · เจ้าหน้าที่' : '') + (isAdmin() ? ' · แอดมิน' : '') + '</small></div>' +
+    app.innerHTML = '<div class="wrap fit"><div class="top"><div class="grow"><h1>จองคิวลงข้อมูล DPA</h1><small>' + esc(S.user.name) + (isOfficer() ? ' · เจ้าหน้าที่' : '') + (isAdmin() ? ' · แอดมิน' : '') + '</small></div>' +
       (S.mode === 'demo' ? '<span class="chip">โหมดทดลอง</span>' : '') + '<button class="btn sm" data-act="theme">สลับธีม</button><button class="btn sm" data-act="logout">ออก</button></div>' +
       '<div class="tabs" role="tablist">' + tabs.map(t => '<button role="tab" class="' + (S.tab === t[0] ? 'on' : '') + '" data-act="tab" data-t="' + t[0] + '">' + t[1] + (t[2] ? '<span class="n">' + t[2] + '</span>' : '') + '</button>').join('') + '</div>' + body + '</div>';
     window.scrollTo(0, keepY);
