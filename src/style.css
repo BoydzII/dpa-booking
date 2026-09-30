@@ -73,4 +73,6 @@ table.g td.t{font-size:.8rem;color:var(--mute);width:56px;text-align:right;paddi
 .pick label{display:flex;gap:10px;align-items:center;padding:6px 12px;border-top:1px solid var(--line);cursor:pointer}
 .pick label:first-child{border-top:0}
 .pick input{width:20px;height:20px}
+.pick label.off{color:var(--mute);cursor:not-allowed;background:var(--off)}
+.pick label.off small{font-size:.8rem}
 @media(max-width:520px){.c{font-size:.72rem;min-height:42px}table.g td.t{width:42px}}

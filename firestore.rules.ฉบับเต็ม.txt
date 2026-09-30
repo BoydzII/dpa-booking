@@ -1,0 +1,325 @@
+rules_version = '2';
+/* กติกาความปลอดภัยของ ปพ.5 Online
+   หลักการ: ต้องมีชื่ออยู่ในคอลเลกชัน staff ก่อนจึงจะอ่านหรือเขียนอะไรได้
+   คัดลอกไฟล์นี้ไปวางที่ Firebase Console → Firestore Database → กฎ → เผยแพร่ */
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* ---------- ตัวช่วย ---------- */
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    // รหัสเอกสารของบุคลากรคืออีเมลตัวพิมพ์เล็ก
+    function myId() {
+      return string(request.auth.token.email).lower();
+    }
+    function myDoc() {
+      return get(/databases/$(database)/documents/staff/$(myId()));
+    }
+    function isStaff() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/staff/$(myId()))
+        && myDoc().data.active != false;
+    }
+    function hasRole(role) {
+      return isStaff() && role in myDoc().data.roles;
+    }
+    function isAdmin()     { return hasRole('admin'); }
+    function isExecutive() { return hasRole('executive'); }
+    function isHead()      { return hasRole('head'); }
+    function isAffairs()   { return hasRole('affairs'); }
+
+    /* ---------- บุคลากร ----------
+       ทุกคนที่อยู่ในระบบอ่านรายชื่อได้ (ต้องใช้หาครูสอนแทนและแสดงภาพรวม)
+       แต่แก้ไขได้เฉพาะผู้ดูแลระบบ ยกเว้นการบันทึกเวลาเข้าใช้ของตัวเอง */
+    match /staff/{staffId} {
+      allow read: if isStaff();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (isStaff() && staffId == myId()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['lastLogin', 'uid']));
+    }
+
+    /* ---------- ข้อมูลหลักของโรงเรียน ----------
+       ห้องเรียน รายวิชา ปี/ภาค ตั้งค่าโรงเรียน — ทุกคนอ่านได้ ผู้ดูแลระบบแก้ */
+    match /shared/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    /* ---------- ตารางสอน ----------
+       ทุกคนอ่านได้ (ใช้หาคาบว่างของครูคนอื่นตอนขอสอนแทน)
+       ผู้ดูแลระบบเท่านั้นที่แก้ เพราะเป็นตารางของทั้งโรงเรียน */
+    match /timetable/{periodId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    /* ---------- ใบลา ----------
+       เจ้าของใบลาสร้างและแก้ของตัวเองได้
+       หัวหน้ากลุ่มสาระให้ความเห็นได้ ผู้บริหารอนุมัติได้ ผู้ดูแลระบบดูได้แต่ไม่อนุมัติแทน */
+    match /leaves/{leaveId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && request.resource.data.teacherId is string;
+      allow update: if isStaff() && (
+           resource.data.teacherId == request.resource.data.teacherId
+        && (
+             // เจ้าของแก้รายละเอียดของตัวเองได้ แต่ห้ามแก้ผลการอนุมัติ
+             (myDoc().data.uid == resource.data.uid
+               && request.resource.data.approval.status != 'approved')
+             // หัวหน้ากลุ่มสาระแก้ได้เฉพาะช่องความเห็นของตน
+             || (isHead() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['headApproval']))
+             // ผู้บริหารแก้ได้เฉพาะช่องอนุมัติ
+             || (isExecutive() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['approval']))
+             // เจ้าของส่งใบลาเข้าสายอนุมัติ
+             || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['approval', 'headApproval', 'requestIds', 'coverageStatus'])
+             // ทำเครื่องหมายว่าลบแล้ว พร้อมชื่อผู้ลบและเหตุผล (หลักฐานอยู่ในคอลเลกชัน audits)
+             || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'deletedAt', 'deletedBy', 'deleteReason'])
+           ));
+      allow delete: if isAdmin();
+    }
+
+    /* ---------- คำขอแลกคาบ / สอนแทน ----------
+       ครูทุกคนอ่านได้ ผู้ขอสร้างได้ ผู้ถูกขอตอบรับได้ */
+    match /swaps/{swapId} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    /* ---------- กิจกรรมนักเรียน ----------
+       ครูทุกคนอ่านได้ เพราะต้องใช้ตั้งสถานะ "กิจกรรม" ในคาบของตน
+       ครูผู้ขอและผู้ดูแลระบบเท่านั้นที่แก้หรือลบได้ */
+    match /activities/{activityId} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if isStaff() && (isAdmin()
+        || resource.data.teacherId == request.resource.data.teacherId);
+    }
+
+    /* ---------- หลักฐานการลบคำขอ ----------
+       ครูทุกคนบันทึกได้เมื่อมีการลบ อ่านได้ทุกคนเพื่อตรวจสอบย้อนหลัง
+       แก้ไขและลบไม่ได้เลยแม้แต่ผู้ดูแลระบบ เพื่อให้เป็นหลักฐานที่เชื่อถือได้ */
+    match /audits/{auditId} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if false;
+    }
+
+    /* ---------- ประกาศ/นัดประชุม ----------
+       ผู้บริหาร หัวหน้ากลุ่มสาระฯ และผู้ดูแลระบบเป็นผู้ประกาศ แก้/ยกเลิกได้เฉพาะของตัวเอง (ผู้ดูแลแก้ได้ทุกอัน)
+       ครูทุกคนอ่านได้ และแตะได้เพียงช่องรับทราบของอีเมลตัวเองเท่านั้น */
+    match /notices/{noticeId} {
+      allow read: if isStaff();
+      allow create: if isAdmin() || isExecutive() || isHead();
+      allow update, delete: if isAdmin()
+        || ((isExecutive() || isHead()) && resource.data.createdByEmail == myId());
+      allow update: if isStaff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ack'])
+        && request.resource.data.get('ack', {}).diff(resource.data.get('ack', {})).affectedKeys().hasOnly([myId()]);
+    }
+
+    /* ---------- การเช็กชื่อ (เตรียมไว้สำหรับขั้นถัดไป) ----------
+       ครูเขียนได้เฉพาะคาบที่ตนเป็นผู้บันทึก ผู้บริหารและผู้ดูแลระบบอ่านได้ทั้งหมด */
+    match /attendance/{recordId} {
+      allow read: if isStaff();
+      allow create, update: if isStaff()
+        && request.resource.data.teacherEmail == myId();
+      allow delete: if isAdmin();
+    }
+
+    /* ---------- คะแนนพฤติกรรม (กิจการนักเรียน) ----------
+       ครูทุกคนบันทึกความดี/ผิดระเบียบได้ทันที โดยต้องลงชื่อตัวเองเป็นผู้บันทึก (byEmail)
+       แก้ได้เฉพาะผู้บันทึกเอง ฝ่ายกิจการนักเรียน และผู้ดูแลระบบ (ใช้ตอนยกเลิกรายการ)
+       ลบไม่ได้เลย รายการที่ผิดให้ "ยกเลิก" แทน เพื่อเก็บเป็นหลักฐาน */
+    match /conduct/{recordId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && request.resource.data.byEmail == myId();
+      allow update: if isAffairs() || isAdmin()
+        || (isStaff() && resource.data.byEmail == myId() && request.resource.data.byEmail == myId());
+      allow delete: if false;
+    }
+
+    /* ---------- สรุปแถวเช้ารายห้อง ----------
+       ครูที่ปรึกษาเขียนตอนกดบันทึกเช็กชื่อคาบเข้าแถว ฝ่ายกิจการฯ ใช้ดูว่าห้องไหนยังไม่เช็ก */
+    match /homeroomDaily/{dayId} {
+      allow read: if isStaff();
+      allow create, update: if isStaff() && request.resource.data.teacherEmail == myId();
+      allow delete: if isAdmin();
+    }
+
+    /* ---------- เกณฑ์คะแนนพฤติกรรม ---------- */
+    match /affairsConfig/{docId} {
+      allow read: if isStaff();
+      allow write: if isAffairs() || isAdmin();
+    }
+
+    /* ---------- เหตุการณ์เข้าประตูจากแอปสแกนใบหน้า (เตรียมไว้) ----------
+       รูปเอกสาร { sid, date: 'YYYY-MM-DD', at: เวลา ISO, deviceId, method: 'face' }
+       แอปสแกนต้องล็อกอินด้วยบัญชีบุคลากรที่มีบทบาท affairs (เช่นบัญชีประจำเครื่องสแกน)
+       เครื่องที่เปิดหน้า "กิจการนักเรียน" จะแปลงเหตุการณ์หลังเวลาเข้าแถวเป็นรายการมาสายให้เอง */
+    match /gateEvents/{eventId} {
+      allow read: if isStaff();
+      allow create: if isAffairs() || isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    /* ---------- เครื่องสแกนใบหน้าประกาศลิงก์ของตัวเอง ----------
+       รูปเอกสาร { url: 'https://...', name, updatedAt }
+       ลิงก์ tunnel ของเครื่องสแกนเปลี่ยนทุกครั้งที่เปิดเครื่อง เครื่องจึงเขียนลิงก์ล่าสุดไว้ที่นี่
+       ครูทุกคนอ่านได้ (ใช้ตอนกดปุ่ม "สแกนหน้า" ในหน้าเช็กชื่อ) เขียนได้เฉพาะบัญชีเครื่องสแกน (affairs) */
+    match /scanDevices/{deviceId} {
+      allow read: if isStaff();
+      allow write: if (isAffairs() || isAdmin())
+        && request.resource.data.url is string
+        && request.resource.data.url.matches('https://.*');
+    }
+
+    /* ---------- สมุดคะแนนของครูแต่ละคน ----------
+       เจ้าของเท่านั้นที่เข้าถึงได้ ผู้บริหารอ่านได้เพื่อดูภาพรวม */
+    match /books/{ownerId}/{document=**} {
+      allow read: if isStaff() && (ownerId == myId() || isExecutive());
+      allow write: if isStaff() && ownerId == myId();
+    }
+
+    /* ---------- ผลการเรียนคงค้าง 0 / ร / มส / มผ ----------
+       ครูทุกคนอ่านได้ เพราะครูที่สอนต่อในภาคถัดไปต้องเห็นว่าเด็กยังค้างอะไรอยู่
+       และหน้าภาพรวมผู้บริหารต้องรวมยอดของทั้งโรงเรียน
+       แก้ไขได้เฉพาะครูเจ้าของรายการ (ownerId คืออีเมลของครูที่บันทึก) กับผู้ดูแลระบบ */
+    match /pendingResults/{recordId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && request.resource.data.ownerId == myId();
+      allow update: if isAdmin()
+        || (isStaff() && resource.data.ownerId == myId()
+            && request.resource.data.ownerId == myId());
+      allow delete: if isAdmin() || (isStaff() && resource.data.ownerId == myId());
+    }
+
+    /* ---------- รูปแบบหัวข้อคะแนนที่ครูส่งขึ้น ----------
+       เก็บเฉพาะโครงหัวข้อคะแนน สัดส่วน และเกณฑ์ตัดเกรด ไม่มีคะแนนของนักเรียน
+       ใช้ตอนครูย้ายไปทำต่อบนเครื่องอื่น และให้ครูที่สอนวิชาเดียวกันหยิบไปใช้ */
+    match /itemTemplates/{templateId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && request.resource.data.ownerId == myId();
+      allow update: if isAdmin()
+        || (isStaff() && resource.data.ownerId == myId()
+            && request.resource.data.ownerId == myId());
+      allow delete: if isAdmin() || (isStaff() && resource.data.ownerId == myId());
+    }
+
+    /* ---------- ชุดตัวชี้วัดที่ครูแชร์ไว้ ----------
+       ครูทุกคนอ่านได้ เพราะจุดประสงค์คือให้ครูที่สอนวิชาเดียวกันหยิบไปใช้ต่อ
+       แก้ไขได้เฉพาะครูเจ้าของชุด (ownerId คืออีเมลของครูที่แชร์) กับผู้ดูแลระบบ */
+    match /indicatorSets/{setId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && request.resource.data.ownerId == myId();
+      allow update: if isAdmin()
+        || (isStaff() && resource.data.ownerId == myId()
+            && request.resource.data.ownerId == myId());
+      allow delete: if isAdmin() || (isStaff() && resource.data.ownerId == myId());
+    }
+
+    /* ---------- บัตรผลการเรียนของนักเรียน ----------
+       นักเรียนเปิดเว็บบนมือถือตัวเองแล้วเข้าดูผลของตัวเองได้ โดยไม่ต้องมีอีเมลโรงเรียน
+       ใช้การเข้าระบบแบบไม่ระบุตัวตน (anonymous) ซึ่งได้ uid ประจำเครื่องมา
+       แล้วผูก uid นั้นกับบัตรของตัวเองครั้งเดียวด้วย "รหัสรับสิทธิ์" ที่ครูแจกให้
+
+       จุดสำคัญด้านความปลอดภัย
+       - ก่อนผูกสำเร็จ นักเรียนอ่านบัตรไม่ได้เลย จึงมองไม่เห็นรหัสรับสิทธิ์ของใคร
+         การพิสูจน์ว่ารู้รหัสทำโดยเขียนค่าที่กรอกลงช่อง claimAttempt แล้วให้กฎเป็นคนเทียบ
+       - ผูกได้ครั้งเดียว บัตรที่มีเจ้าของแล้วจะถูกผูกซ้ำไม่ได้ (ครูล้างให้ได้ถ้าเปลี่ยนเครื่อง)
+       - แก้ได้เฉพาะสามช่องที่เกี่ยวกับการผูกเท่านั้น แตะคะแนนไม่ได้
+       - อ่านได้เฉพาะบัตรที่ uid ตรงกับตัวเอง จึงไม่มีทางเปิดดูของเพื่อน */
+    function claimingOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['uid', 'claimedAt', 'claimAttempt']);
+    }
+    match /studentCards/{sid} {
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow create, delete: if isStaff();
+      // ครูแก้ข้อมูลบัตรได้ทุกช่อง ส่วนนักเรียนแก้ได้แค่ตอนผูกเครื่องครั้งแรก
+      allow update: if isStaff()
+        || (request.auth != null
+            && resource.data.uid == ''
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.claimAttempt == resource.data.claimCode
+            && claimingOnly());
+
+      /* ผลรายวิชา ครูเจ้าของวิชาเป็นคนเผยแพร่เอง จึงคุมได้ว่าจะให้เห็นตอนไหน
+         นักเรียนอ่านได้เมื่อผูกบัตรแม่แล้วเท่านั้น */
+      match /subjects/{bookKey} {
+        allow read: if request.auth != null
+          && get(/databases/$(database)/documents/studentCards/$(sid)).data.uid == request.auth.uid;
+        allow write: if isStaff();
+      }
+    }
+
+    /* ---------- ตั้งค่าแอปจองคิว: ทุกคนอ่าน แอดมินแก้ ---------- */
+    match /dpaConfig/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    /* ---------- คิว: 1 เอกสาร = 1 ช่องเวลาของเจ้าหน้าที่ 1 คน ----------
+       รหัสเอกสาร = อีเมลเจ้าหน้าที่_YYYY-MM-DD_HHmm  (จึงจองซ้ำช่องเดียวกันไม่ได้)
+       status: open → requested → confirmed | declined | cancelled */
+    match /dpaSlots/{slotId} {
+      function isOfficer() {
+        return isStaff()
+          && myId() in get(/databases/$(database)/documents/dpaConfig/main).data.officerEmails;
+      }
+      function changed() {
+        return request.resource.data.diff(resource.data).affectedKeys();
+      }
+
+      allow read: if isStaff();
+
+      // เจ้าหน้าที่ประกาศช่วงว่างของตัวเองเท่านั้น
+      allow create: if isAdmin()
+        || (isOfficer()
+            && request.resource.data.officer == myId()
+            && request.resource.data.status == 'open'
+            && request.resource.data.keys().hasOnly(['officer', 'officerName', 'date', 'start', 'status', 'createdAt']));
+
+      allow update: if isAdmin()
+        // ครูขอจองช่องที่ว่าง (เปลี่ยนได้เฉพาะช่องข้อมูลของผู้จอง และจองแทนคนอื่นไม่ได้)
+        || (isStaff()
+            && resource.data.status == 'open'
+            && request.resource.data.status == 'requested'
+            && request.resource.data.teacherEmail == myId()
+            && resource.data.officer != myId()
+            && changed().hasOnly(['status', 'teacherEmail', 'teacherName', 'teacherPhone', 'topic', 'note', 'requestedAt']))
+        // ครูยกเลิกคิวของตัวเอง
+        || (isStaff()
+            && resource.data.teacherEmail == myId()
+            && resource.data.status in ['requested', 'confirmed']
+            && request.resource.data.status == 'cancelled'
+            && changed().hasOnly(['status', 'cancelledAt']))
+        // เจ้าหน้าที่เจ้าของช่องรับ/ปฏิเสธ/ยกเลิก
+        || (isOfficer()
+            && resource.data.officer == myId()
+            && resource.data.status in ['requested', 'confirmed']
+            && request.resource.data.status in ['confirmed', 'declined', 'cancelled']
+            && changed().hasOnly(['status', 'decidedAt', 'officerNote']))
+        // เจ้าหน้าที่เปิดช่องที่ปฏิเสธ/ยกเลิกให้ว่างอีกครั้ง (ล้างข้อมูลผู้จอง)
+        || (isOfficer()
+            && resource.data.officer == myId()
+            && resource.data.status in ['declined', 'cancelled']
+            && request.resource.data.status == 'open'
+            && changed().hasOnly(['status', 'teacherEmail', 'teacherName', 'teacherPhone', 'topic', 'note', 'requestedAt', 'decidedAt', 'officerNote', 'cancelledAt']));
+
+      // ลบได้เฉพาะช่องที่ยังไม่มีคิวอยู่ (ว่าง/ปฏิเสธ/ยกเลิก)
+      allow delete: if isAdmin()
+        || (isOfficer()
+            && resource.data.officer == myId()
+            && resource.data.status in ['open', 'declined', 'cancelled']);
+    }
+
+    /* ปิดทุกอย่างที่ไม่ได้ระบุไว้ข้างบน */
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

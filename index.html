@@ -83,6 +83,8 @@ table.g td.t{font-size:.8rem;color:var(--mute);width:56px;text-align:right;paddi
 .pick label{display:flex;gap:10px;align-items:center;padding:6px 12px;border-top:1px solid var(--line);cursor:pointer}
 .pick label:first-child{border-top:0}
 .pick input{width:20px;height:20px}
+.pick label.off{color:var(--mute);cursor:not-allowed;background:var(--off)}
+.pick label.off small{font-size:.8rem}
 @media(max-width:520px){.c{font-size:.72rem;min-height:42px}table.g td.t{width:42px}}
 
 </style>
@@ -230,7 +232,7 @@ if (typeof module !== 'undefined') module.exports = DPA;
       async login(email) { const s = staff.find(x => x.email === email); if (!s) throw new Error('ไม่พบบัญชีตัวอย่าง'); return Object.assign({}, s); },
       async restore() { return null; }, async logout() { onCfg = onSlots = null; },
       async reset() { db = seed(); save(); },
-      async staff() { return staff.slice(); },
+      async staff() { return staff.concat([1, 2, 3].map(i => ({ noEmail: true, email: 'noemail_demo' + i, name: 'ครูยังไม่มีอีเมล ' + i, phone: '', roles: ['teacher'] }))); },
       watch(_t, c, s) { load(); onCfg = c; onSlots = s; save(); return () => { onCfg = onSlots = null; }; },
       async saveConfig(cfg) { load().cfg = cfg; save(); },
       async putOpen(list) { const d = load(); list.forEach(x => { const id = D.slotId(x.officer, x.date, x.start); if (!d.slots[id]) d.slots[id] = Object.assign({ status: 'open' }, x); }); save(); },
@@ -268,7 +270,8 @@ if (typeof module !== 'undefined') module.exports = DPA;
       },
       async restore() { await init(); return new Promise(res => { const off = fb.auth.onAuthStateChanged(async u => { off(); try { res(u ? await profile(u) : null); } catch (e) { res(null); } }); }); },
       async logout() { if (fb) await fb.auth.signOut(); },
-      async staff() { const q = await col('staff').get(); return q.docs.filter(d => d.id.indexOf('noemail_') !== 0 && d.data().active !== false).map(d => ({ email: d.id, name: d.data().name || d.id, phone: d.data().phone || '', roles: d.data().roles || [] })); },
+      async staff() { const q = await col('staff').get(); /* ครูที่ยังไม่มีอีเมล (noemail_…) แสดงเป็นสีเทาให้เห็นว่ามีชื่อ แต่เลือกไม่ได้เพราะยังล็อกอินไม่ได้ */
+        return q.docs.filter(d => d.data().active !== false).map(d => ({ noEmail: d.id.indexOf('noemail_') === 0, email: d.id, name: d.data().name || d.id, phone: d.data().phone || '', roles: d.data().roles || [] })); },
       watch(t, c, s, err) {
         const a = col('dpaConfig').doc('main').onSnapshot(x => c(x.exists ? x.data() : {}), err);
         const b = col('dpaSlots').where('date', '>=', t).onSnapshot(q => s(q.docs.map(d => Object.assign({ id: d.id }, d.data()))), err);
@@ -461,8 +464,9 @@ if (typeof module !== 'undefined') module.exports = DPA;
     }
     const d = ensureDraft(), sel = {}; d.officers.forEach(o => { sel[o.email] = 1; });
     const list = S.staff.slice().sort((a, b) => a.name.localeCompare(b.name, 'th'));
-    const rows = q => list.filter(s => !q || s.name.indexOf(q) >= 0).slice(0, 200).map(s => '<label><input type="checkbox" data-em="' + esc(s.email) + '" ' + (sel[s.email] ? 'checked' : '') + '><span>' + esc(s.name) + '</span></label>').join('') || '<p class="empty">ไม่พบชื่อ</p>';
-    modal('เลือกเจ้าหน้าที่ (' + list.length + ' คน)', '<input type="text" id="pq" placeholder="ค้นชื่อครู"><div class="pick" id="plist">' + rows('') + '</div><p class="small muted" id="pcnt"></p>',
+    const rows = q => list.filter(s => !q || s.name.indexOf(q) >= 0).slice(0, 200).map(s => s.noEmail ? '<label class="off" title="เติมอีเมลใน KruSpace ก่อนจึงเลือกได้"><input type="checkbox" disabled><span>' + esc(s.name) + ' <small>· ยังไม่มีอีเมล</small></span></label>' : '<label><input type="checkbox" data-em="' + esc(s.email) + '" ' + (sel[s.email] ? 'checked' : '') + '><span>' + esc(s.name) + '</span></label>').join('') || '<p class="empty">ไม่พบชื่อ</p>';
+    const noMail = list.filter(s => s.noEmail).length;
+    modal('เลือกเจ้าหน้าที่ (' + list.length + ' คน)', (noMail ? '<p class="small muted" style="margin:0 0 8px">ชื่อสีเทา ' + noMail + ' คนยังไม่มีอีเมล จึงยังล็อกอินและเป็นเจ้าหน้าที่ไม่ได้ — เติมอีเมลใน KruSpace แล้วกด “อัปเดตขึ้นส่วนกลาง” ก่อน</p>' : '') + '<input type="text" id="pq" placeholder="ค้นชื่อครู"><div class="pick" id="plist">' + rows('') + '</div><p class="small muted" id="pcnt"></p>',
       [{ label: 'ยกเลิก' }, { label: 'ตกลง', cls: 'pri', act: () => {
         if (Object.keys(sel).length > 4) { toast('เลือกได้ไม่เกิน 4 คน', true); return false; }
         const keep = d.officers.filter(o => sel[o.email]);
