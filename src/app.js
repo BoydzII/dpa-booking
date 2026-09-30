@@ -304,16 +304,17 @@
     const tabs = [['book', 'จองคิว']]; tabs.push(['mine', 'คิวของฉัน', mySlots().length]);
     if (isOfficer()) tabs.push(['work', 'งานเจ้าหน้าที่', pending().length]);
     if (isAdmin()) tabs.push(['admin', 'ตั้งค่า']);
-    if (!tabs.some(t => t[0] === S.tab)) S.tab = 'book';
-    const body = S.tab === 'book' ? viewBook() : S.tab === 'mine' ? viewMine() : S.tab === 'work' ? viewWork() : viewAdmin();
+    /* ไม่เขียนทับ S.tab: ตอนเพิ่งล็อกอินการตั้งค่ายังโหลดไม่ถึง ยังไม่รู้ว่าเป็นเจ้าหน้าที่ ถ้าทับเป็น book ลิงก์ #work จะหลุด */
+    const tab = tabs.some(t => t[0] === S.tab) ? S.tab : 'book';
+    const body = tab === 'book' ? viewBook() : tab === 'mine' ? viewMine() : tab === 'work' ? viewWork() : viewAdmin();
     app.innerHTML = '<div class="wrap fit"><div class="top"><div class="grow"><h1>จองคิวลงข้อมูล DPA</h1><small>' + esc(S.user.name) + (isOfficer() ? ' · เจ้าหน้าที่' : '') + (isAdmin() ? ' · แอดมิน' : '') + '</small></div>' +
       (S.mode === 'demo' ? '<span class="chip">โหมดทดลอง</span>' : '') + '<button class="btn sm" data-act="theme">สลับธีม</button><button class="btn sm" data-act="logout">ออก</button></div>' +
-      '<div class="tabs" role="tablist">' + tabs.map(t => '<button role="tab" class="' + (S.tab === t[0] ? 'on' : '') + '" data-act="tab" data-t="' + t[0] + '">' + t[1] + (t[2] ? '<span class="n">' + t[2] + '</span>' : '') + '</button>').join('') + '</div>' + body + '</div>';
+      '<div class="tabs" role="tablist">' + tabs.map(t => '<button role="tab" class="' + (tab === t[0] ? 'on' : '') + '" data-act="tab" data-t="' + t[0] + '">' + t[1] + (t[2] ? '<span class="n">' + t[2] + '</span>' : '') + '</button>').join('') + '</div>' + body + '</div>';
     window.scrollTo(0, keepY);
   }
 
   function startSession(user) {
-    S.user = user; S.tab = 'book'; S.draft = null; S.staff = null; S.month = D.addDays(today(), 1).slice(0, 8) + '01';
+    S.user = user; S.tab = location.hash === '#work' ? 'work' : 'book';   /* ลิงก์จากกระดิ่ง KruSpace มาพร้อม #work ให้เปิดหน้างานเจ้าหน้าที่ทันที */ S.draft = null; S.staff = null; S.month = D.addDays(today(), 1).slice(0, 8) + '01';
     if (unwatch) unwatch();
     unwatch = store.watch(today(), c => { S.cfg = D.withDefaults(c); render(); }, list => { S.slots = list; S.map = {}; list.forEach(s => { S.map[s.id] = s; }); render(); },
       e => toast(e && e.code === 'permission-denied' ? 'ยังไม่มีสิทธิ์อ่านข้อมูลจองคิว — ต้องวาง Firestore rules ชุดใหม่ใน Firebase Console ก่อน' : 'เชื่อมข้อมูลไม่ได้: ' + (e && e.message), true));
